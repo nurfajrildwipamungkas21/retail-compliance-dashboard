@@ -1,24 +1,3 @@
-# =============================================================================
-# ORACLE-RETAIL DEMO — Streamlit App (Single File)
-# Gabungan: Prep & Data Quality + Classification + Compliance Dashboard
-# Dengan Narasi AI (Gemini) opsional — API key demo ditanam (fallback ke ENV)
-#
-# Peningkatan tambahan:
-#   - Memanfaatkan file penyimpanan persistensi untuk menyimpan hasil pipeline
-#     terakhir (`demo_last_classified.parquet` dan `demo_last_report.parquet`).
-#     Saat aplikasi dimulai, jika file ini ditemukan, aplikasi akan langsung
-#     memuat dan menampilkan hasil tersebut sehingga HR atau pengunjung dapat
-#     melihat demo tanpa harus menekan tombol "Jalankan Pipeline".
-#     Jika file tidak ada, pipeline akan otomatis dijalankan pada dataset
-#     contoh (jika tersedia) atau data sintetis, disimpan, dan kemudian
-#     ditampilkan.
-#   - Pie chart distribusi status kini dibungkus dalam st.expander sehingga
-#     tidak memenuhi halaman sampai pengguna mengkliknya.
-#   - Narasi AI dibersihkan dari markup Markdown dan diberi warna teks yang
-#     kontras ketika tema Streamlit gelap agar lebih mudah dibaca.
-#
-# Author: Assistant
-# =============================================================================
 
 import os
 import io
