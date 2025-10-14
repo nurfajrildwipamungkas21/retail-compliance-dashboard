@@ -1,0 +1,7 @@
+# .streamlit/config.toml
+[theme]
+base                    = "dark"
+primaryColor            = "#4F81BD"   # warna aksen (biru)
+backgroundColor         = "#0e1117"   # warna latar utama
+secondaryBackgroundColor= "#111827"   # latar belakang widget dan sidebar
+textColor               = "#e5e7eb"   # warna teks
