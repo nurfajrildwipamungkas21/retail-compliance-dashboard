@@ -42,6 +42,34 @@ from openpyxl.utils import get_column_letter
 from openpyxl.styles import Font, PatternFill
 from openpyxl.worksheet.table import Table, TableStyleInfo
 
+# Helpers for sample detection and Parquet fallback
+def locate_sample() -> Path | None:
+    """
+    Locate a sample file under `sample_data` directory. It will prefer
+    compressed CSV (.csv.gz), then plain CSV, then Parquet. If no file is found,
+    returns None.
+    """
+    for p in [
+        Path("sample_data/online_retail_sample.csv.gz"),
+        Path("sample_data/online_retail_sample.csv"),
+        Path("sample_data/online_retail_sample.parquet"),
+    ]:
+        if p.exists():
+            return p
+    return None
+
+# Detect availability of pyarrow for Parquet read/write
+HAVE_PARQUET = False
+try:
+    import pyarrow  # type: ignore
+    HAVE_PARQUET = True
+except Exception:
+    HAVE_PARQUET = False
+
+# CSV fallback paths for saving results when Parquet is not available
+LAST_CLASSIFIED_CSV = "demo_last_classified.csv.gz"
+LAST_REPORT_CSV = "demo_last_report.csv.gz"
+
 # Set Streamlit page configuration
 st.set_page_config(
     page_title="Compliance Intelligence Dashboard",
@@ -66,7 +94,7 @@ LAST_REPORT_PATH = "demo_last_report.parquet"
 # Fallback: use environment variable GEMINI_API_KEY if provided; otherwise
 # fallback to this demo key. For production usage, consider storing the
 # key securely in secrets and not hard-coding it here.
-DEMO_GEMINI_KEY = "AIzaSyCXQQlDnENBgfFXsmDj86we_UxigK0TlgM"
+DEMO_GEMINI_KEY = "AIzaSyCIorCwif0YeTrjntDDTMHxqcsbZuhQxZ8"
 
 
 def get_gemini_key() -> str:
@@ -193,19 +221,32 @@ def df_to_excel_bytes(df: pd.DataFrame, title: str, summary_data: dict) -> bytes
 
 def try_read_any(path: Path) -> pd.DataFrame:
     """
-    Read a file regardless of its extension (CSV, Excel, or Parquet).
+    Read a file regardless of its extension (CSV, compressed CSV, Excel, or Parquet).
+
+    If the file has a ``.csv.gz`` suffix, ``pandas.read_csv`` will automatically
+    detect the gzip compression. Parquet files are only read if the optional
+    dependency ``pyarrow`` is available; otherwise, a ``ValueError`` will be
+    raised so that callers can handle missing Parquet support gracefully.
     """
-    if path.suffix.lower() in {".xlsx", ".xls"}:
+    suffix = path.suffix.lower()
+    name = path.name.lower()
+    # Excel formats
+    if suffix in {".xlsx", ".xls"}:
         return pd.read_excel(path)
-    elif path.suffix.lower() == ".csv":
+    # Compressed or plain CSV
+    if suffix == ".csv" or name.endswith(".csv.gz"):
         try:
             return pd.read_csv(path)
         except UnicodeDecodeError:
+            # fallback encoding for some European/Asian CSV files
             return pd.read_csv(path, encoding="latin1")
-    elif path.suffix.lower() == ".parquet":
-        return pd.read_parquet(path)
-    else:
-        raise ValueError(f"Ekstensi tidak didukung: {path.suffix}")
+    # Parquet (requires pyarrow)
+    if suffix == ".parquet":
+        if HAVE_PARQUET:
+            return pd.read_parquet(path)
+        # If Parquet support isn't available, signal error to caller
+        raise ValueError("Parquet support is not available (pyarrow not installed)")
+    raise ValueError(f"Ekstensi tidak didukung: {path.suffix}")
 
 
 def guess_best_candidate(base: Path) -> Path | None:
@@ -624,9 +665,16 @@ def run_pipeline(
         else:
             raise ValueError("Hanya CSV/XLSX yang diterima dari uploader.")
     elif use_sample:
-        sample_path = Path("sample_data/online_retail_sample.csv")
-        if sample_path.exists():
-            df_raw = try_read_any(sample_path)
+        # Locate any sample file in the sample_data directory. We prefer
+        # compressed CSV (.csv.gz) first, then plain CSV, then Parquet. If
+        # nothing is found, fall back to a synthetic dataset.
+        sample_path = locate_sample()
+        if sample_path is not None:
+            try:
+                df_raw = try_read_any(sample_path)
+            except Exception:
+                # If reading fails (e.g. unsupported format), fall back to synthetic sample
+                df_raw = synth_sample_df(400)
         else:
             df_raw = synth_sample_df(400)
     else:
@@ -651,8 +699,13 @@ def show_pipeline_results(df_class: pd.DataFrame, df_report: pd.DataFrame, save_
     # Save results for persistence if requested
     if save_results:
         try:
-            df_class.to_parquet(LAST_CLASSIFIED_PATH)
-            df_report.to_parquet(LAST_REPORT_PATH)
+            # When Parquet support is available, use Parquet; otherwise fall back to gzip-compressed CSV
+            if HAVE_PARQUET:
+                df_class.to_parquet(LAST_CLASSIFIED_PATH)
+                df_report.to_parquet(LAST_REPORT_PATH)
+            else:
+                df_class.to_csv(LAST_CLASSIFIED_CSV, index=False, compression='gzip')
+                df_report.to_csv(LAST_REPORT_CSV, index=False, compression='gzip')
         except Exception as e:
             logging.warning(f"Gagal menyimpan hasil ke file: {e}")
 
@@ -877,31 +930,47 @@ with st.sidebar:
 def load_or_generate_initial_results() -> tuple[pd.DataFrame, pd.DataFrame]:
     """
     Attempt to load previously saved results from disk. If files do not
-    exist, run pipeline on a sample or synthetic dataset, save results,
+    exist or fail to load, run the pipeline on a sample or synthetic dataset,
+    save results (using Parquet if available, otherwise gzip-compressed CSV),
     and return them.
     """
-    if os.path.exists(LAST_CLASSIFIED_PATH) and os.path.exists(LAST_REPORT_PATH):
-        try:
+    # Try to load previously persisted results. Prefer Parquet if available
+    try:
+        if HAVE_PARQUET and os.path.exists(LAST_CLASSIFIED_PATH) and os.path.exists(LAST_REPORT_PATH):
             df_class = pd.read_parquet(LAST_CLASSIFIED_PATH)
             df_report = pd.read_parquet(LAST_REPORT_PATH)
             return df_class, df_report
-        except Exception as e:
-            logging.warning(
-                f"Gagal memuat file hasil terakhir: {e}. Menjalankan pipeline default."
-            )
+        # Fallback to CSV persistence when Parquet is unavailable or not found
+        if os.path.exists(LAST_CLASSIFIED_CSV) and os.path.exists(LAST_REPORT_CSV):
+            df_class = pd.read_csv(LAST_CLASSIFIED_CSV)
+            df_report = pd.read_csv(LAST_REPORT_CSV)
+            return df_class, df_report
+    except Exception as e:
+        logging.warning(
+            f"Gagal memuat file hasil terakhir: {e}. Menjalankan pipeline default."
+        )
 
     # No previous files or failed to load; run default pipeline
-    sample_path = Path("sample_data/online_retail_sample.csv")
-    if sample_path.exists():
-        df_raw = try_read_any(sample_path)
+    # Locate any sample file from sample_data. Use compressed CSV first, then CSV, then Parquet
+    sample_path = locate_sample()
+    if sample_path is not None:
+        try:
+            df_raw = try_read_any(sample_path)
+        except Exception:
+            df_raw = synth_sample_df(400)
     else:
         df_raw = synth_sample_df(400)
+
     df_clean, df_report = quality_split(df_raw)
     df_class = classify_transactions(df_clean)
     # Save results for persistence
     try:
-        df_class.to_parquet(LAST_CLASSIFIED_PATH)
-        df_report.to_parquet(LAST_REPORT_PATH)
+        if HAVE_PARQUET:
+            df_class.to_parquet(LAST_CLASSIFIED_PATH)
+            df_report.to_parquet(LAST_REPORT_PATH)
+        else:
+            df_class.to_csv(LAST_CLASSIFIED_CSV, index=False, compression='gzip')
+            df_report.to_csv(LAST_REPORT_CSV, index=False, compression='gzip')
     except Exception as e:
         logging.warning(f"Gagal menyimpan hasil default: {e}")
     return df_class, df_report
