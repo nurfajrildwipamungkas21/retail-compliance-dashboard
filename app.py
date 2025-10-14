@@ -882,7 +882,7 @@ def show_pipeline_results(df_class: pd.DataFrame, df_report: pd.DataFrame, save_
             )
 
     st.success(
-        "✅ Pipeline selesai. Link demo ini bisa dicantumkan di CV untuk dilihat real-time."
+        "✅ Pipeline selesai."
     )
 
     # Offline HTML report
