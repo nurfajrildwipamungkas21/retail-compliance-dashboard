@@ -178,7 +178,8 @@ def apply_theme():
       }}
 
       /* File uploader styling */
-      [data-testid="stFileUploader"] > div {{
+      /* Target the nested dropzone container instead of the outer wrapper */
+      [data-testid="stFileUploader"] > div > div {{
         background: var(--ui-card-color) !important;
         border: 1px dashed var(--ui-border-color) !important;
         color: var(--ui-text-color) !important;
@@ -209,6 +210,20 @@ def apply_theme():
         border-radius: 8px;
         border: 1px solid var(--ui-border-color);
         color: var(--ui-text-color);
+      }}
+
+      /* Ensure the top container (block container) uses the app background in dark mode */
+      /* This helps remove the residual white bar above the first content block */
+      .block-container {{
+        background: var(--ui-bg-color);
+      }}
+
+      /* Improve file uploader styling: dark background with white text on dark theme */
+      /* Ensure all descriptive text inside file uploader is visible */
+      [data-testid="stFileUploader"] p,
+      [data-testid="stFileUploader"] small,
+      [data-testid="stFileUploader"] span {{
+        color: var(--ui-text-color) !important;
       }}
 
     </style>
