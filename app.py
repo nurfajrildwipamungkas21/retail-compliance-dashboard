@@ -110,19 +110,27 @@ def apply_theme():
     # components. Only override backgrounds, headings, metrics and caption.
     st.markdown(f"""
     <style>
-      .stApp {{ background: {pal['bg']}; }}
-      h1, h2, h3, h4, h5, h6 {{ color: {pal['header']}; }}
-      div[data-testid="stMetric"] label {{ color: {pal['text']} !important; }}
-      div[data-testid="stMetricValue"] {{ color: {pal['header']} !important; }}
+      /* Define CSS custom properties for dynamic theming */
+      :root {{
+        --ui-bg-color: {pal['bg']};
+        --ui-text-color: {pal['text']};
+        --ui-header-color: {pal['header']};
+        --ui-card-color: {pal['card']};
+        --ui-border-color: {pal['border']};
+      }}
+      .stApp {{ background: var(--ui-bg-color); }}
+      h1, h2, h3, h4, h5, h6 {{ color: var(--ui-header-color); }}
+      div[data-testid="stMetric"] label {{ color: var(--ui-text-color) !important; }}
+      div[data-testid="stMetricValue"] {{ color: var(--ui-header-color) !important; }}
       /* Caption components: ensure they remain visible on dark backgrounds */
-      .stCaption, .stCaption p {{ color: {pal['text']}; opacity: 0.75; }}
+      .stCaption, .stCaption p {{ color: var(--ui-text-color); opacity: 0.75; }}
       /* Markdown content: paragraphs and list items adopt the primary text color */
       div[data-testid="stMarkdownContainer"] p,
-      div[data-testid="stMarkdownContainer"] li {{ color: {pal['text']}; }}
+      div[data-testid="stMarkdownContainer"] li {{ color: var(--ui-text-color); }}
       /* Emphasised text within markdown uses the header color for contrast */
-      div[data-testid="stMarkdownContainer"] strong {{ color: {pal['header']}; }}
+      div[data-testid="stMarkdownContainer"] strong {{ color: var(--ui-header-color); }}
       /* Generic card styling */
-      .card-like {{ background:{pal['card']}; border:1px solid {pal['border']}; border-radius:12px; padding:16px; }}
+      .card-like {{ background: var(--ui-card-color); border:1px solid var(--ui-border-color); border-radius:12px; padding:16px; }}
     </style>
     """, unsafe_allow_html=True)
 
@@ -854,15 +862,19 @@ def show_pipeline_results(df_class: pd.DataFrame, df_report: pd.DataFrame, save_
                 "Narasi AI tidak tersedia saat ini. Menampilkan ringkasan non-AI."
             )
 
-    # Non-AI summary (baseline)
-    st.markdown(
-        f"""
-        - **Cancelled**: {summary_df.loc['Cancelled','Jumlah Transaksi'] if 'Cancelled' in summary_df.index else 0:,} transaksi ({summary_df.loc['Cancelled','Persentase (%)'] if 'Cancelled' in summary_df.index else 0.0:.2f}%).
-          Item paling sering dibatalkan: **{top_name}** ({top_cnt}×).
-        - **Zero Price**: {zero_n:,} transaksi tanpa pendapatan → audit alur input harga & validasi otomatis.
-        - **Normal Sale**: {normal_n:,} transaksi → basis bisnis sehat; pertahankan keandalan proses.
-        """
+    # Non-AI summary (baseline) rendered with HTML to leverage CSS variables.  This
+    # approach ensures the text remains legible across light and dark themes.
+    cancelled_n = summary_df.loc['Cancelled', 'Jumlah Transaksi'] if 'Cancelled' in summary_df.index else 0
+    cancelled_pct = summary_df.loc['Cancelled', 'Persentase (%)'] if 'Cancelled' in summary_df.index else 0.0
+    summary_html = (
+        f"<ul style='padding-left:1.2rem; margin-bottom:0.5rem;'>"
+        f"<li><strong style='color:var(--ui-header-color);'>Cancelled</strong>: {cancelled_n:,} transaksi ({cancelled_pct:.2f}%)."
+        f" Item paling sering dibatalkan: <strong style='color:var(--ui-header-color);'>{top_name}</strong> ({top_cnt}×).</li>"
+        f"<li><strong style='color:var(--ui-header-color);'>Zero Price</strong>: {zero_n:,} transaksi tanpa pendapatan → audit alur input harga &amp; validasi otomatis.</li>"
+        f"<li><strong style='color:var(--ui-header-color);'>Normal Sale</strong>: {normal_n:,} transaksi → basis bisnis sehat; pertahankan keandalan proses.</li>"
+        "</ul>"
     )
+    st.markdown(summary_html, unsafe_allow_html=True)
 
     # Data preview with a labeled index column
     st.subheader("Pratinjau Data")
@@ -968,10 +980,6 @@ def show_pipeline_results(df_class: pd.DataFrame, df_report: pd.DataFrame, save_
 # MAIN UI LOGIC
 # =========================
 
-st.title("📊 Compliance Intelligence Dashboard — Retail Transactions")
-st.caption(
-    "Demo publik: pipeline kualitas data → klasifikasi transaksi → insight bisnis + unduhan Excel — by Nur Fajril Dwi Pamungkas"
-)
 
 with st.sidebar:
     # Theme selector
@@ -996,6 +1004,18 @@ with st.sidebar:
 
 # Apply the theme settings after sidebar inputs are defined
 apply_theme()
+
+# Render the page title and caption using dynamic CSS variables for color.  The caption
+# sits directly beneath the title and leverages the variables defined in apply_theme().
+st.title("📊 Compliance Intelligence Dashboard — Retail Transactions")
+_caption_text = (
+    "Demo publik: pipeline kualitas data → klasifikasi transaksi → insight bisnis + unduhan Excel "
+    "— by Nur Fajril Dwi Pamungkas"
+)
+st.markdown(
+    f"<div style='font-size:0.85rem; margin-top:-0.4rem; color: var(--ui-text-color); opacity:0.75'>{_caption_text}</div>",
+    unsafe_allow_html=True,
+)
 
 
 def load_or_generate_initial_results() -> tuple[pd.DataFrame, pd.DataFrame]:
