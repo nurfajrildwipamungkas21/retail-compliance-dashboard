@@ -279,9 +279,9 @@ def synth_sample_df(n: int = 200) -> pd.DataFrame:
     transactions dataset. Useful when no real data is provided or found.
     """
     rng = np.random.default_rng(42)
-    invoice_base = rng.integers(10000, 99999, size=n).astype(str)
-    cancel_mask = rng.random(n) < 0.05
-    invoice = np.where(cancel_mask, "C" + invoice_base, invoice_base)
+    invoice = np.where(cancel_mask,
+                       np.char.add("C", invoice_base),
+                       invoice_base)
     unit_price = np.round(rng.uniform(0, 50, size=n), 2)
     zero_mask = rng.random(n) < 0.03
     unit_price[zero_mask] = 0.0
