@@ -94,7 +94,7 @@ LAST_REPORT_PATH = "demo_last_report.parquet"
 # Fallback: use environment variable GEMINI_API_KEY if provided; otherwise
 # fallback to this demo key. For production usage, consider storing the
 # key securely in secrets and not hard-coding it here.
-DEMO_GEMINI_KEY = "AIzaSyCIorCwif0YeTrjntDDTMHxqcsbZuhQxZ8"
+DEMO_GEMINI_KEY = "AIzaSyCXQQlDnENBgfFXsmDj86we_UxigK0TlgM"
 
 
 def get_gemini_key() -> str:
@@ -279,9 +279,12 @@ def synth_sample_df(n: int = 200) -> pd.DataFrame:
     transactions dataset. Useful when no real data is provided or found.
     """
     rng = np.random.default_rng(42)
-    invoice = np.where(cancel_mask,
-                       np.char.add("C", invoice_base),
-                       invoice_base)
+    invoice_base = rng.integers(10000, 99999, size=n).astype(str)
+    cancel_mask = rng.random(n) < 0.05
+    # Initialize invoice array and prefix 'C' to cancelled invoices using vectorized operations
+    invoice = invoice_base.copy()
+    if cancel_mask.any():
+        invoice[cancel_mask] = np.char.add("C", invoice[cancel_mask])
     unit_price = np.round(rng.uniform(0, 50, size=n), 2)
     zero_mask = rng.random(n) < 0.03
     unit_price[zero_mask] = 0.0
@@ -522,14 +525,22 @@ def generate_ai_narrative(
             resp2.text if hasattr(resp2, "text") else str(resp2)
         )
 
-        # Wrap output with styling for dark theme
-        # Header: remove "(AI)" to follow user preference
+        # Determine text color based on the active Streamlit theme. When using the light theme,
+        # dark text colors are used to ensure readability. Otherwise the dark theme colors are used.
+        try:
+            base_theme = st.get_option("theme.base")
+        except Exception:
+            base_theme = "light"
+        text_color = "#e5e7eb" if base_theme == "dark" else "#111827"
+        heading_color = "#f3f4f6" if base_theme == "dark" else "#111827"
+
+        # Wrap output with styling adapted to the theme. Remove any leftover markdown bold markers.
         html = f"""
-        <div style='font-family:Inter,Segoe UI; color:#e5e7eb; line-height:1.6'>
-          <h3 style='margin-top:0; color:#f3f4f6'>Analisis Naratif Otomatis</h3>
-          <h4 style='color:#f3f4f6'>Ringkasan Eksekutif</h4>
+        <div style='font-family:Inter,Segoe UI; color:{text_color}; line-height:1.6'>
+          <h3 style='margin-top:0; color:{heading_color}'>Analisis Naratif Otomatis</h3>
+          <h4 style='color:{heading_color}'>Ringkasan Eksekutif</h4>
           {exec_html}
-          <h4 style='color:#f3f4f6'>Temuan & Rekomendasi</h4>
+          <h4 style='color:{heading_color}'>Temuan & Rekomendasi</h4>
           {find_html}
         </div>
         """
@@ -784,7 +795,8 @@ def show_pipeline_results(df_class: pd.DataFrame, df_report: pd.DataFrame, save_
         )
         if html_ai:
             # Display AI-generated narrative and store for offline report
-            st.components.v1.html(html_ai, height=640, scrolling=True)
+            # Reduce the height to fit better on mobile screens
+            st.components.v1.html(html_ai, height=520, scrolling=True)
             narrative_html = html_ai
         else:
             st.info(
