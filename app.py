@@ -114,8 +114,13 @@ def apply_theme():
       h1, h2, h3, h4, h5, h6 {{ color: {pal['header']}; }}
       div[data-testid="stMetric"] label {{ color: {pal['text']} !important; }}
       div[data-testid="stMetricValue"] {{ color: {pal['header']} !important; }}
-      /* Caption text should remain visible on dark backgrounds */
-      div[data-testid="stCaption"] {{ color: {pal['text']}; opacity: 0.75; }}
+      /* Caption components: ensure they remain visible on dark backgrounds */
+      .stCaption, .stCaption p {{ color: {pal['text']}; opacity: 0.75; }}
+      /* Markdown content: paragraphs and list items adopt the primary text color */
+      div[data-testid="stMarkdownContainer"] p,
+      div[data-testid="stMarkdownContainer"] li {{ color: {pal['text']}; }}
+      /* Emphasised text within markdown uses the header color for contrast */
+      div[data-testid="stMarkdownContainer"] strong {{ color: {pal['header']}; }}
       /* Generic card styling */
       .card-like {{ background:{pal['card']}; border:1px solid {pal['border']}; border-radius:12px; padding:16px; }}
     </style>
