@@ -1,24 +1,3 @@
-# =============================================================================
-# ORACLE-RETAIL DEMO — Streamlit App (Single File)
-# Gabungan: Prep & Data Quality + Classification + Compliance Dashboard
-# Dengan Narasi AI (Gemini) opsional — API key demo ditanam (fallback ke ENV)
-#
-# Peningkatan tambahan:
-#   - Memanfaatkan file penyimpanan persistensi untuk menyimpan hasil pipeline
-#     terakhir (`demo_last_classified.parquet` dan `demo_last_report.parquet`).
-#     Saat aplikasi dimulai, jika file ini ditemukan, aplikasi akan langsung
-#     memuat dan menampilkan hasil tersebut sehingga HR atau pengunjung dapat
-#     melihat demo tanpa harus menekan tombol "Jalankan Pipeline".
-#     Jika file tidak ada, pipeline akan otomatis dijalankan pada dataset
-#     contoh (jika tersedia) atau data sintetis, disimpan, dan kemudian
-#     ditampilkan.
-#   - Pie chart distribusi status kini dibungkus dalam st.expander sehingga
-#     tidak memenuhi halaman sampai pengguna mengkliknya.
-#   - Narasi AI dibersihkan dari markup Markdown dan diberi warna teks yang
-#     kontras ketika tema Streamlit gelap agar lebih mudah dibaca.
-#
-# Author: Assistant
-# =============================================================================
 
 import os
 import io
@@ -785,21 +764,22 @@ def show_pipeline_results(df_class: pd.DataFrame, df_report: pd.DataFrame, save_
     zero_n = int((df_class["TransactionStatus"] == "Zero Price").sum())
     normal_n = int((df_class["TransactionStatus"] == "Normal Sale").sum())
 
-    # AI narrative: generate and display if available
+    # AI narrative: generate and display if available.  Pass the selected
+    # theme mode through so the narrative can choose an appropriate text
+    # colour.  If the call fails or returns an empty string, fall back to
+    # the non‑AI summary.
     if ENABLE_AI:
         html_ai = generate_ai_narrative(
             {"clean": len(df_class), "anomaly": len(df_report)},
             df_class,
             (top_name, top_cnt),
             zero_n,
+            theme_mode=st.session_state.get("theme_mode", "auto"),
         )
         if html_ai:
-            # Display AI‑generated narrative.  Render the HTML within the
-            # Streamlit page so that it inherits the active theme.  Setting
-            # ``unsafe_allow_html=True`` allows our HTML headings and
-            # paragraphs to render correctly.  We avoid specifying a fixed
-            # height so that the content can expand naturally on both mobile
-            # and desktop devices.
+            # Render the narrative inside the app.  Using st.markdown
+            # (unsafe_allow_html=True) ensures the HTML is interpreted and
+            # inherits the current theme colours.
             st.markdown(html_ai, unsafe_allow_html=True)
             narrative_html = html_ai
         else:
@@ -940,6 +920,21 @@ with st.sidebar:
     st.write(
         "Jika Anda tidak mengunggah file, aplikasi secara otomatis akan memproses dataset contoh."
     )
+    # Allow users to switch between light and dark appearances.  The
+    # selection is stored in st.session_state['theme_mode'] and applied
+    # globally via apply_custom_theme().  "Auto" delegates theme choice to
+    # Streamlit (default).
+    theme_choice = st.selectbox(
+        "Tema tampilan",
+        ["Auto", "Terang", "Gelap"],
+        index=["auto", "terang", "gelap"].index(st.session_state.get("theme_mode", "auto")),
+        format_func=lambda x: x,
+    )
+    st.session_state["theme_mode"] = theme_choice.lower()
+    # Immediately apply the chosen theme.  This ensures that when the user
+    # switches themes via the sidebar the colours update without requiring a
+    # manual reload.
+    apply_custom_theme()
     run_btn = st.button("🚀 Jalankan Pipeline")
 
 
