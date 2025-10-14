@@ -1,42 +1,92 @@
-import os
+"""
+Retail Compliance Intelligence Dashboard (Streamlit)
+
+This standalone Streamlit application reads transactional data from a user
+uploaded CSV/Excel file (or falls back to a sample or synthetic dataset),
+performs quality checks, classifies transactions, and presents an
+interactive dashboard with key metrics, charts, and business insights.
+
+Features:
+
+* Data ingestion supporting CSV/XLSX/XLS and gzip‑compressed CSV. If no file
+  is provided, a sample file is used if present, otherwise a synthetic
+  dataset is generated.
+* Quality control splitting the data into clean and anomalous rows based on
+  completeness (rows with fewer than 6 non‑missing values are flagged).
+* Classification of clean rows into ``Cancelled``, ``Admin/Fee``, ``Zero
+  Price`` and ``Normal Sale`` transaction types.
+* Interactive charts (funnel, treemap and pie) summarising the data.
+* Optional AI narrative using the Google Generative AI (Gemini) API.
+  Narrative calls include generous timeouts (30 seconds) to prevent timeouts
+  on constrained execution environments. The narrative falls back to a
+  baseline summary if the API fails or is disabled.
+* Download buttons to export each subset of the data to Excel. A separate
+  offline HTML report can also be generated.
+* Sidebar theme switcher allowing users to toggle between Auto (default),
+  Terang (light) and Gelap (dark) themes. CSS overrides are injected
+  accordingly to ensure the narrative and other elements are legible.
+
+Author: Assistant
+"""
+
+from __future__ import annotations
+
 import io
-import textwrap
 import logging
-from pathlib import Path
+import os
+import textwrap
 from datetime import datetime
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
-import streamlit as st
 import plotly.express as px
 import plotly.graph_objects as go
+import streamlit as st
 from openpyxl import Workbook
-from openpyxl.utils.dataframe import dataframe_to_rows
-from openpyxl.utils import get_column_letter
 from openpyxl.styles import Font, PatternFill
+from openpyxl.utils import get_column_letter
+from openpyxl.utils.dataframe import dataframe_to_rows
 from openpyxl.worksheet.table import Table, TableStyleInfo
 
-# Helpers for sample detection and Parquet fallback
+###############################################################################
+# Utilities
+###############################################################################
+
 def locate_sample() -> Path | None:
-    for p in [
+    """Locate a sample file in the ``sample_data`` directory.
+
+    Preference order is compressed CSV (.csv.gz), plain CSV and then parquet.
+    Returns ``None`` if no sample is available.
+    """
+    candidates = [
         Path("sample_data/online_retail_sample.csv.gz"),
         Path("sample_data/online_retail_sample.csv"),
         Path("sample_data/online_retail_sample.parquet"),
-    ]:
+    ]
+    for p in candidates:
         if p.exists():
             return p
     return None
 
-HAVE_PARQUET = False
+
+# Check for optional pyarrow dependency; use CSV fallback if unavailable.
 try:
-    import pyarrow
+    import pyarrow  # type: ignore  # noqa: F401
     HAVE_PARQUET = True
 except Exception:
     HAVE_PARQUET = False
 
-# Theme helper
+
 def apply_custom_theme() -> None:
-    """Inject CSS overrides based on the theme_mode stored in session_state."""
+    """Apply custom CSS overrides based on the selected theme.
+
+    Supported modes stored in ``st.session_state['theme_mode']`` are:
+    ``'auto'`` (no override), ``'terang'`` (light) and ``'gelap'`` (dark).
+    When a theme is selected, CSS is injected to adjust the background and
+    text colours accordingly. This ensures that the narrative and other
+    elements are readable regardless of the underlying Streamlit theme.
+    """
     mode = st.session_state.get("theme_mode", "auto")
     if mode == "terang":
         st.markdown(
@@ -56,51 +106,79 @@ def apply_custom_theme() -> None:
             """,
             unsafe_allow_html=True,
         )
+    # In auto mode no override is applied.
 
-st.set_page_config(
-    page_title="Compliance Intelligence Dashboard",
-    page_icon="📊",
-    layout="wide"
-)
-logging.getLogger().setLevel(logging.INFO)
+
+###############################################################################
+# Persistence and API configuration
+###############################################################################
 
 LAST_CLASSIFIED_PATH = "demo_last_classified.parquet"
 LAST_REPORT_PATH = "demo_last_report.parquet"
 LAST_CLASSIFIED_CSV = "demo_last_classified.csv.gz"
 LAST_REPORT_CSV = "demo_last_report.csv.gz"
+
+# Replace this with your own Gemini key or set GEMINI_API_KEY in the environment
 DEMO_GEMINI_KEY = "YOUR_DEMO_KEY"
 
+
 def get_gemini_key() -> str:
+    """Return the Gemini API key from the environment or fallback to demo key."""
     env_key = os.getenv("GEMINI_API_KEY", "").strip()
     return env_key if env_key else DEMO_GEMINI_KEY
 
+
+# Initialise Gemini API if available. If loading fails, ENABLE_AI remains False.
 ENABLE_AI = True
 try:
-    import google.generativeai as genai
+    import google.generativeai as genai  # type: ignore
     genai.configure(api_key=get_gemini_key())
 except Exception as e:
     ENABLE_AI = False
     logging.warning(f"google-generativeai tidak aktif: {e}")
 
+
+###############################################################################
+# Data processing functions
+###############################################################################
+
 def normalize_col(name: str) -> str:
     return str(name).lower().replace(" ", "").replace("_", "")
 
-TARGET_COLUMNS = {normalize_col(c) for c in [
-    "UnitPrice", "CustomerID", "Country", "Quantity",
-    "Description", "StockCode", "InvoiceNo", "InvoiceDate",
-]}
+
+TARGET_COLUMNS = {
+    normalize_col(c)
+    for c in [
+        "UnitPrice",
+        "CustomerID",
+        "Country",
+        "Quantity",
+        "Description",
+        "StockCode",
+        "InvoiceNo",
+        "InvoiceDate",
+    ]
+}
 MIN_MATCH_SCORE = 5
 VALID_DATA_THRESHOLD = 6
 
+
 def df_to_excel_bytes(df: pd.DataFrame, title: str, summary_data: dict) -> bytes:
+    """Create an Excel file in memory from a DataFrame.
+
+    A header with a title and summary section is added, followed by the data
+    formatted as a table with zebra striping and auto‑fitted column widths.
+    """
     wb = Workbook()
     ws = wb.active
     ws.title = "Data"
 
+    # Header
     ws.merge_cells("A1:E1")
     ws["A1"].value = title
     ws["A1"].font = Font(size=16, bold=True, color="0B4F6C")
 
+    # Summary section
     row_num = 3
     for k, v in summary_data.items():
         ws.cell(row=row_num, column=1, value=k).font = Font(bold=True)
@@ -108,18 +186,18 @@ def df_to_excel_bytes(df: pd.DataFrame, title: str, summary_data: dict) -> bytes
         row_num += 1
 
     start_row = row_num + 2
-    for r_idx, row in enumerate(
-        dataframe_to_rows(df, index=False, header=True), start_row
-    ):
+    for r_idx, row in enumerate(dataframe_to_rows(df, index=False, header=True), start_row):
         for c_idx, value in enumerate(row, 1):
             ws.cell(row=r_idx, column=c_idx, value=value)
 
+    # Header styling
     header_font = Font(bold=True, color="FFFFFF")
     header_fill = PatternFill(start_color="4F81BD", end_color="4F81BD", fill_type="solid")
     for cell in ws[start_row]:
         cell.font = header_font
         cell.fill = header_fill
 
+    # Table with zebra striping
     if df.shape[0] > 0 and df.shape[1] > 0:
         ref = f"A{start_row}:{get_column_letter(df.shape[1])}{start_row + df.shape[0]}"
         table = Table(displayName="DataTable", ref=ref)
@@ -127,6 +205,7 @@ def df_to_excel_bytes(df: pd.DataFrame, title: str, summary_data: dict) -> bytes
         table.tableStyleInfo = style
         ws.add_table(table)
 
+    # Auto‑fit column widths
     for col in ws.columns:
         max_len = 0
         col_letter = get_column_letter(col[0].column)
@@ -142,7 +221,9 @@ def df_to_excel_bytes(df: pd.DataFrame, title: str, summary_data: dict) -> bytes
     wb.save(bio)
     return bio.getvalue()
 
+
 def try_read_any(path: Path) -> pd.DataFrame:
+    """Read a file of various formats (CSV, Excel, Parquet)."""
     suffix = path.suffix.lower()
     name = path.name.lower()
     if suffix in {".xlsx", ".xls"}:
@@ -158,7 +239,9 @@ def try_read_any(path: Path) -> pd.DataFrame:
         raise ValueError("Parquet support is not available (pyarrow not installed)")
     raise ValueError(f"Ekstensi tidak didukung: {path.suffix}")
 
+
 def guess_best_candidate(base: Path) -> Path | None:
+    """Guess the best data file under a directory by matching column names."""
     files: list[Path] = []
     for suffix in ("*.csv", "*.xlsx", "*.xls", "*.parquet"):
         files.extend(list(base.rglob(suffix)))
@@ -176,7 +259,9 @@ def guess_best_candidate(base: Path) -> Path | None:
             continue
     return best
 
+
 def synth_sample_df(n: int = 200) -> pd.DataFrame:
+    """Generate a synthetic sample dataset for demonstration purposes."""
     rng = np.random.default_rng(42)
     invoice_base = rng.integers(10000, 99999, size=n).astype(str)
     cancel_mask = rng.random(n) < 0.05
@@ -189,8 +274,14 @@ def synth_sample_df(n: int = 200) -> pd.DataFrame:
     df = pd.DataFrame(
         {
             "InvoiceNo": invoice,
-            "StockCode": rng.choice(["10001", "10002", "POST", "D", "M", "20001", "20002", "PADS"], size=n),
-            "Description": rng.choice(["MUG", "CUP", "POSTAGE", "Manual", "nan", "check", "PLATE"], size=n),
+            "StockCode": rng.choice(
+                ["10001", "10002", "POST", "D", "M", "20001", "20002", "PADS"],
+                size=n,
+            ),
+            "Description": rng.choice(
+                ["MUG", "CUP", "POSTAGE", "Manual", "nan", "check", "PLATE"],
+                size=n,
+            ),
             "Quantity": rng.integers(1, 8, size=n),
             "InvoiceDate": pd.to_datetime("2021-01-01") + pd.to_timedelta(rng.integers(0, 365, size=n), unit="D"),
             "UnitPrice": unit_price,
@@ -200,7 +291,9 @@ def synth_sample_df(n: int = 200) -> pd.DataFrame:
     )
     return df
 
+
 def quality_split(df_raw: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Split raw data into clean and report subsets based on row completeness."""
     df = df_raw.copy()
     if "Unnamed: 8" in df.columns:
         df = df.drop(columns=["Unnamed: 8"])
@@ -208,60 +301,129 @@ def quality_split(df_raw: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
         df[c] = df[c].astype(str)
     if "InvoiceDate" in df.columns:
         df["InvoiceDate"] = pd.to_datetime(df["InvoiceDate"], errors="coerce")
-
     df["valid_values_count"] = df.notna().sum(axis=1)
     conditions = [
         (df["valid_values_count"] == 0),
         (df["valid_values_count"] < VALID_DATA_THRESHOLD),
         (df["valid_values_count"] >= VALID_DATA_THRESHOLD),
     ]
-    df["quality_status"] = np.select(conditions, ["Baris Kosong Total", "Data Sangat Minim", "Data Lengkap"], default="Unknown")
+    df["quality_status"] = np.select(
+        conditions,
+        ["Baris Kosong Total", "Data Sangat Minim", "Data Lengkap"],
+        default="Unknown",
+    )
     df["OriginalRowNumber"] = np.arange(len(df)) + 2
-
-    df_clean = df[df["quality_status"] == "Data Lengkap"].drop(columns=["valid_values_count", "quality_status", "OriginalRowNumber"]).reset_index(drop=True)
+    df_clean = (
+        df[df["quality_status"] == "Data Lengkap"]
+        .drop(columns=["valid_values_count", "quality_status", "OriginalRowNumber"])
+        .reset_index(drop=True)
+    )
     df_report = df[df["quality_status"] != "Data Lengkap"].sort_values(by="valid_values_count")
     return df_clean, df_report
 
+
 def classify_transactions(df: pd.DataFrame) -> pd.DataFrame:
+    """Classify transactions into Cancelled, Admin/Fee, Zero Price or Normal Sale."""
     d = df.copy()
     d["InvoiceNo"] = d["InvoiceNo"].astype(str)
     admin_codes = ["POST", "D", "MANUAL", "C2", "M", "BANK CHARGES", "PADS", "DOT"]
     cond_cancelled = d["InvoiceNo"].str.startswith("C", na=False)
     cond_admin = d.get("StockCode", pd.Series(False, index=d.index)).isin(admin_codes)
-    cond_zero = (pd.to_numeric(d.get("UnitPrice", 0), errors="coerce").fillna(0) == 0) & (~cond_cancelled) & (~cond_admin)
-    d["TransactionStatus"] = np.select([cond_cancelled, cond_admin, cond_zero], ["Cancelled", "Admin/Fee", "Zero Price"], default="Normal Sale")
+    cond_zero = (
+        pd.to_numeric(d.get("UnitPrice", 0), errors="coerce").fillna(0) == 0
+    ) & (~cond_cancelled) & (~cond_admin)
+    d["TransactionStatus"] = np.select(
+        [cond_cancelled, cond_admin, cond_zero],
+        ["Cancelled", "Admin/Fee", "Zero Price"],
+        default="Normal Sale",
+    )
     return d
+
+
+###############################################################################
+# Visualisation functions
+###############################################################################
 
 def plot_treemap(df_classified: pd.DataFrame):
     s = df_classified["TransactionStatus"].value_counts().reset_index()
     s.columns = ["TransactionStatus", "Jumlah"]
-    fig = px.treemap(s, path=["TransactionStatus"], values="Jumlah", title="Peta Komposisi Status Transaksi")
+    fig = px.treemap(
+        s,
+        path=["TransactionStatus"],
+        values="Jumlah",
+        title="Peta Komposisi Status Transaksi",
+    )
     fig.update_traces(textinfo="label+value+percent parent")
     fig.update_layout(margin=dict(t=40, l=10, r=10, b=10), height=360)
     return fig
 
+
 def plot_pie(df_classified: pd.DataFrame):
     s = df_classified["TransactionStatus"].value_counts().reset_index()
     s.columns = ["Status", "Jumlah"]
-    fig = px.pie(s, names="Status", values="Jumlah", hole=0.4, title="Distribusi Status Transaksi (%)")
+    fig = px.pie(
+        s,
+        names="Status",
+        values="Jumlah",
+        hole=0.4,
+        title="Distribusi Status Transaksi (%)",
+    )
     fig.update_traces(textinfo="percent+label")
     fig.update_layout(margin=dict(t=40, l=10, r=10, b=10), height=360)
     return fig
+
 
 def plot_funnel(df_classified: pd.DataFrame, df_report: pd.DataFrame):
     status_counts = df_classified["TransactionStatus"].value_counts()
     labels = ["Data Siap Pakai"] + status_counts.index.tolist()
     values = [len(df_classified)] + status_counts.values.tolist()
-    fig = go.Figure(go.Funnel(y=labels, x=values, textposition="inside", textinfo="value+percent initial", hovertemplate="<b>%{y}</b><br>Jumlah: %{x:,}<extra></extra>"))
-    fig.update_layout(title_text="Aliran & Komposisi Data Siap Pakai", margin=dict(t=50, l=30, r=30, b=20), height=420)
+    fig = go.Figure(
+        go.Funnel(
+            y=labels,
+            x=values,
+            textposition="inside",
+            textinfo="value+percent initial",
+            hovertemplate="<b>%{y}</b><br>Jumlah: %{x:,}<extra></extra>",
+        )
+    )
+    fig.update_layout(
+        title_text="Aliran & Komposisi Data Siap Pakai",
+        margin=dict(t=50, l=30, r=30, b=20),
+        height=420,
+    )
     return fig
 
-def generate_ai_narrative(stats: dict, df_classified: pd.DataFrame, top_cancel_item: tuple[str, int], zero_price_count: int, theme_mode: str = "auto") -> str:
+
+###############################################################################
+# AI narrative
+###############################################################################
+
+def _clean_ai_html(s: str) -> str:
+    """Clean AI‑generated HTML by removing Markdown bold fences."""
+    if not s:
+        return ""
+    s = s.strip()
+    s = s.replace("```html", "").replace("```", "")
+    return re.sub(r"\*\*(.*?)\*\*", r"<strong>\1</strong>", s)
+
+
+def generate_ai_narrative(
+    stats: dict,
+    df_classified: pd.DataFrame,
+    top_cancel_item: tuple[str, int],
+    zero_price_count: int,
+    theme_mode: str = "auto",
+) -> str:
+    """Generate a narrative summary using the Gemini API.
+
+    Returns an empty string if AI is disabled or an exception occurs. The
+    ``theme_mode`` parameter is unused here but preserved for future
+    extension.
+    """
     if not ENABLE_AI:
         return ""
     try:
         model = genai.GenerativeModel("gemini-2.5-flash")
-
         status_counts = df_classified["TransactionStatus"].value_counts()
         total = int(status_counts.sum())
         normal_n = int(status_counts.get("Normal Sale", 0))
@@ -303,44 +465,52 @@ def generate_ai_narrative(stats: dict, df_classified: pd.DataFrame, top_cancel_i
         resp2 = model.generate_content(prompt2, request_options={"timeout": 30000})
         find_html = _clean_ai_html(resp2.text if hasattr(resp2, "text") else str(resp2))
 
-        html = f"""
-        <div style='font-family:Inter,Segoe UI; line-height:1.6'>
-          <h3 style='margin-top:0'>Analisis Naratif Otomatis</h3>
-          <h4>Ringkasan Eksekutif</h4>
-          {exec_html}
-          <h4>Temuan &amp; Rekomendasi</h4>
-          {find_html}
-        </div>
-        """
-        html = html.replace("**", "")
-        return html
+        html = (
+            "<div style='font-family:Inter,Segoe UI; line-height:1.6'>"
+            "<h3 style='margin-top:0'>Analisis Naratif Otomatis</h3>"
+            "<h4>Ringkasan Eksekutif</h4>"
+            f"{exec_html}"
+            "<h4>Temuan &amp; Rekomendasi</h4>"
+            f"{find_html}"
+            "</div>"
+        )
+        return html.replace("**", "")
     except Exception as e:
         logging.warning(f"Gagal narasi AI: {e}")
         return ""
 
-def build_offline_html_report(df_class: pd.DataFrame, df_report: pd.DataFrame, summary_df: pd.DataFrame, narrative_html: str, author: str = "Nur Fajril Dwi Pamungkas") -> bytes:
+
+###############################################################################
+# Report generation
+###############################################################################
+
+def build_offline_html_report(
+    df_class: pd.DataFrame,
+    df_report: pd.DataFrame,
+    summary_df: pd.DataFrame,
+    narrative_html: str,
+    author: str = "Nur Fajril Dwi Pamungkas",
+) -> bytes:
+    """Construct a standalone HTML report with charts, narrative and summary."""
     funnel_fig = plot_funnel(df_class, df_report)
     treemap_fig = plot_treemap(df_class)
     pie_fig = plot_pie(df_class)
-
+    # Use dark theme in offline report for consistency
     for fig in [funnel_fig, treemap_fig, pie_fig]:
         try:
             fig.update_layout(template="plotly_dark")
         except Exception:
             pass
-
     funnel_html = funnel_fig.to_html(include_plotlyjs="full", full_html=False)
     treemap_html = treemap_fig.to_html(include_plotlyjs=False, full_html=False)
     pie_html = pie_fig.to_html(include_plotlyjs=False, full_html=False)
-
     summary_display = summary_df.reset_index().rename(columns={"index": "Status"})
     table_html = summary_display.to_html(index=False, border=0)
-
     total_all = len(df_class) + len(df_report)
     total_clean = len(df_class)
     total_anom = len(df_report)
     now_str = datetime.now().strftime("%d %B %Y, %H:%M WIB")
-
+    narrative_section = narrative_html if narrative_html else '<p class="muted">Narasi tidak tersedia.</p>'
     html_body = f"""
 <!doctype html>
 <html lang="id">
@@ -376,7 +546,7 @@ def build_offline_html_report(df_class: pd.DataFrame, df_report: pd.DataFrame, s
   </div>
   <div class="card" style="margin-top:16px">
     <h2>Analisis Naratif Otomatis</h2>
-    {narrative_html if narrative_html else, '<p class="muted'>Narasi tidak tersedia.</p>'}
+    {narrative_section}
   </div>
   <div class="card" style="margin-top:16px">
     <h2>Ringkasan Status</h2>
@@ -387,8 +557,31 @@ def build_offline_html_report(df_class: pd.DataFrame, df_report: pd.DataFrame, s
     """
     return html_body.encode("utf-8")
 
+
+###############################################################################
+# Streamlit page setup
+###############################################################################
+
+st.set_page_config(
+    page_title="Compliance Intelligence Dashboard",
+    page_icon="📊",
+    layout="wide",
+)
+logging.getLogger().setLevel(logging.INFO)
+
+
+###############################################################################
+# Pipeline operations
+###############################################################################
+
 @st.cache_data(show_spinner=False)
-def run_pipeline(file_bytes: bytes | None, fname: str | None, use_sample: bool) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+def run_pipeline(
+    file_bytes: bytes | None,
+    fname: str | None,
+    use_sample: bool,
+) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+    """Load, split and classify the dataset."""
+    # 1) Loading
     if file_bytes is not None and fname is not None:
         if fname.lower().endswith(".csv"):
             df_raw = pd.read_csv(io.BytesIO(file_bytes))
@@ -408,25 +601,31 @@ def run_pipeline(file_bytes: bytes | None, fname: str | None, use_sample: bool) 
     else:
         cand = guess_best_candidate(Path.cwd())
         df_raw = try_read_any(cand) if cand else synth_sample_df(400)
-
+    # 2) Quality split
     df_clean, df_report = quality_split(df_raw)
+    # 3) Classification
     df_class = classify_transactions(df_clean)
     return df_raw, df_clean, df_report, df_class
 
-def show_pipeline_results(df_class: pd.DataFrame, df_report: pd.DataFrame, save_results: bool = False) -> None:
+
+def show_pipeline_results(
+    df_class: pd.DataFrame,
+    df_report: pd.DataFrame,
+    save_results: bool = False,
+) -> None:
+    """Render all dashboard components given classified and report DataFrames."""
     if save_results:
         try:
             if HAVE_PARQUET:
                 df_class.to_parquet(LAST_CLASSIFIED_PATH)
                 df_report.to_parquet(LAST_REPORT_PATH)
             else:
-                df_class.to_csv(LAST_CLASSIFIED_CSV, index=False, compression='gzip')
-                df_report.to_csv(LAST_REPORT_CSV, index=False, compression='gzip')
+                df_class.to_csv(LAST_CLASSIFIED_CSV, index=False, compression="gzip")
+                df_report.to_csv(LAST_REPORT_CSV, index=False, compression="gzip")
         except Exception as e:
             logging.warning(f"Gagal menyimpan hasil ke file: {e}")
-
-    narrative_html: str = ""
-
+    narrative_html = ""
+    # Metrics
     col1, col2, col3 = st.columns(3)
     with col1:
         st.metric("Total (estimasi mentah)", value=f"{len(df_class) + len(df_report):,}")
@@ -435,7 +634,7 @@ def show_pipeline_results(df_class: pd.DataFrame, df_report: pd.DataFrame, save_
     with col3:
         st.metric("Baris Dipisahkan (Anomali)", value=f"{len(df_report):,}")
     st.divider()
-
+    # Visuals
     c1, c2 = st.columns([2, 1])
     with c1:
         st.plotly_chart(plot_funnel(df_class, df_report), use_container_width=True)
@@ -443,17 +642,19 @@ def show_pipeline_results(df_class: pd.DataFrame, df_report: pd.DataFrame, save_
         st.plotly_chart(plot_treemap(df_class), use_container_width=True)
         with st.expander("📊 Tampilkan Pie Chart Distribusi (%)", expanded=False):
             st.plotly_chart(plot_pie(df_class), use_container_width=True)
-
+    # Summary table
     st.subheader("Ringkasan Status Transaksi")
     status_counts = df_class["TransactionStatus"].value_counts()
-    summary_df = pd.DataFrame({
-        "Jumlah Transaksi": status_counts,
-        "Persentase (%)": (status_counts / len(df_class) * 100).round(2),
-    }).sort_values(by="Jumlah Transaksi", ascending=False)
+    summary_df = pd.DataFrame(
+        {
+            "Jumlah Transaksi": status_counts,
+            "Persentase (%)": (status_counts / len(df_class) * 100).round(2),
+        }
+    ).sort_values(by="Jumlah Transaksi", ascending=False)
     st.dataframe(summary_df, use_container_width=True)
-
+    # Business insights
     st.subheader("Insight Bisnis")
-    non_product_codes = ["POST","D","MANUAL","C2","M","BANK CHARGES","PADS","DOT"]
+    non_product_codes = ["POST", "D", "MANUAL", "C2", "M", "BANK CHARGES", "PADS", "DOT"]
     non_product_descs = ["nan", "?", "check", "POSTAGE", "Manual"]
     cancelled_items_df = df_class[
         (df_class["TransactionStatus"] == "Cancelled")
@@ -465,7 +666,7 @@ def show_pipeline_results(df_class: pd.DataFrame, df_report: pd.DataFrame, save_
     top_cnt = int(top_cancel.iloc[0]) if not top_cancel.empty else 0
     zero_n = int((df_class["TransactionStatus"] == "Zero Price").sum())
     normal_n = int((df_class["TransactionStatus"] == "Normal Sale").sum())
-
+    # AI narrative generation
     if ENABLE_AI:
         html_ai = generate_ai_narrative(
             {"clean": len(df_class), "anomaly": len(df_report)},
@@ -479,16 +680,16 @@ def show_pipeline_results(df_class: pd.DataFrame, df_report: pd.DataFrame, save_
             narrative_html = html_ai
         else:
             st.info("Narasi AI tidak tersedia saat ini. Menampilkan ringkasan non-AI.")
-
+    # Baseline summary
     st.markdown(
         f"""
-        - **Cancelled**: {summary_df.loc['Cancelled','Jumlah Transaksi'] if 'Cancelled' in summary_df.index else 0:,} transaksi ({summary_df.loc['Cancelled','Persentase (%)'] if 'Cancelled' in summary_df.index else 0.0:.2f}%).
-          Item paling sering dibatalkan: **{top_name}** ({top_cnt}×).
-        - **Zero Price**: {zero_n:,} transaksi tanpa pendapatan → audit alur input harga & validasi otomatis.
+        - **Cancelled**: {summary_df.loc['Cancelled','Jumlah Transaksi'] if 'Cancelled' in summary_df.index else 0:,} transaksi ({summary_df.loc['Cancelled','Persentase (%)'] if 'Cancelled' in summary_df.index else 0.0:.2f}%).\
+          Item paling sering dibatalkan: **{top_name}** ({top_cnt}×).\
+        - **Zero Price**: {zero_n:,} transaksi tanpa pendapatan → audit alur input harga & validasi otomatis.\
         - **Normal Sale**: {normal_n:,} transaksi → basis bisnis sehat; pertahankan keandalan proses.
         """
     )
-
+    # Data preview tabs
     st.subheader("Pratinjau Data")
     tab1, tab2, tab3, tab4 = st.tabs(["Clean", "Anomali", "Zero Price", "Cancelled"])
     with tab1:
@@ -511,7 +712,7 @@ def show_pipeline_results(df_class: pd.DataFrame, df_report: pd.DataFrame, save_
         df_cancelled.index = df_cancelled.index + 1
         df_cancelled.index.name = "Baris"
         st.dataframe(df_cancelled, use_container_width=True)
-
+    # Download buttons
     st.subheader("Unduh Laporan (.xlsx)")
     now_id = datetime.now().strftime("%Y%m%d_%H%M")
     def make_btn(df: pd.DataFrame, title: str, cat: str, fname_prefix: str) -> None:
@@ -543,32 +744,59 @@ def show_pipeline_results(df_class: pd.DataFrame, df_report: pd.DataFrame, save_
                 f"Status {st_name}",
                 f"status_{st_name.replace(' ', '_')}",
             )
-
     st.success("✅ Pipeline selesai. Link demo ini bisa dicantumkan di CV untuk dilihat real-time.")
-
+    # Offline report download
     try:
-        offline_html = build_offline_html_report(df_class, df_report, summary_df, narrative_html, author="Nur Fajril Dwi Pamungkas")
-        st.download_button("🗂️ Simpan Laporan Offline (.html)", data=offline_html, file_name=f"retail_dashboard_{now_id}.html", mime="text/html")
+        offline_html = build_offline_html_report(
+            df_class,
+            df_report,
+            summary_df,
+            narrative_html,
+            author="Nur Fajril Dwi Pamungkas",
+        )
+        st.download_button(
+            "🗂️ Simpan Laporan Offline (.html)",
+            data=offline_html,
+            file_name=f"retail_dashboard_{now_id}.html",
+            mime="text/html",
+        )
     except Exception as e:
         logging.warning(f"Gagal membuat laporan offline: {e}")
 
+
+###############################################################################
+# Streamlit layout
+###############################################################################
+
 st.title("📊 Compliance Intelligence Dashboard — Retail Transactions")
-st.caption("Demo publik: pipeline kualitas data → klasifikasi transaksi → insight bisnis + unduhan Excel — by Nur Fajril Dwi Pamungkas")
+st.caption(
+    "Demo publik: pipeline kualitas data → klasifikasi transaksi → insight bisnis + unduhan Excel — by Nur Fajril Dwi Pamungkas"
+)
 
 with st.sidebar:
     st.header("⚙️ Input Data")
     up = st.file_uploader("Upload CSV / XLSX (opsional)", type=["csv", "xlsx", "xls"])
+    # Set default AI usage
     st.session_state.setdefault("use_ai", True)
-    # Tema tampilan: allow user to choose Auto, Terang, Gelap
+    # Theme selection: Auto, Terang, Gelap
     current_theme = st.session_state.get("theme_mode", "auto")
     theme_options = ["Auto", "Terang", "Gelap"]
-    theme_labels = {"auto": "Auto", "terang": "Terang", "gelap": "Gelap"}
-    theme_choice = st.selectbox("Tema tampilan", theme_options, index=theme_options.index(theme_labels.get(current_theme, "Auto")))
+    # Determine index based on current mode
+    idx = theme_options.index(current_theme.capitalize()) if current_theme.capitalize() in theme_options else 0
+    theme_choice = st.selectbox(
+        "Tema tampilan",
+        theme_options,
+        index=idx,
+    )
     st.session_state["theme_mode"] = theme_choice.lower()
+    # Apply the theme immediately
     apply_custom_theme()
+    # Button to run the pipeline
     run_btn = st.button("🚀 Jalankan Pipeline")
 
+
 def load_or_generate_initial_results() -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Load previously persisted results or run the pipeline on default data."""
     try:
         if HAVE_PARQUET and os.path.exists(LAST_CLASSIFIED_PATH) and os.path.exists(LAST_REPORT_PATH):
             df_class = pd.read_parquet(LAST_CLASSIFIED_PATH)
@@ -580,7 +808,6 @@ def load_or_generate_initial_results() -> tuple[pd.DataFrame, pd.DataFrame]:
             return df_class, df_report
     except Exception as e:
         logging.warning(f"Gagal memuat file hasil terakhir: {e}. Menjalankan pipeline default.")
-
     sample_path = locate_sample()
     if sample_path is not None:
         try:
@@ -589,7 +816,6 @@ def load_or_generate_initial_results() -> tuple[pd.DataFrame, pd.DataFrame]:
             df_raw = synth_sample_df(400)
     else:
         df_raw = synth_sample_df(400)
-
     df_clean, df_report = quality_split(df_raw)
     df_class = classify_transactions(df_clean)
     try:
@@ -597,11 +823,12 @@ def load_or_generate_initial_results() -> tuple[pd.DataFrame, pd.DataFrame]:
             df_class.to_parquet(LAST_CLASSIFIED_PATH)
             df_report.to_parquet(LAST_REPORT_PATH)
         else:
-            df_class.to_csv(LAST_CLASSIFIED_CSV, index=False, compression='gzip')
-            df_report.to_csv(LAST_REPORT_CSV, index=False, compression='gzip')
+            df_class.to_csv(LAST_CLASSIFIED_CSV, index=False, compression="gzip")
+            df_report.to_csv(LAST_REPORT_CSV, index=False, compression="gzip")
     except Exception as e:
         logging.warning(f"Gagal menyimpan hasil default: {e}")
     return df_class, df_report
+
 
 if run_btn:
     with st.spinner("Memproses data..."):
