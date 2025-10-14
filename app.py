@@ -99,8 +99,9 @@ def get_theme_palette(base: str) -> dict:
 def apply_theme():
     """
     Set template Plotly and inject global CSS per user theme choice.
-    This extended version styles the sidebar, file uploader, buttons,
-    alerts, and dataframes to ensure consistency in dark mode.
+    This extended version styles the entire app, including the top header,
+    sidebar, file uploader, buttons, alerts, and dataframes to ensure
+    consistency in dark mode.
     """
     base = _get_theme_base()
     pal = get_theme_palette(base)
@@ -123,8 +124,27 @@ def apply_theme():
       }}
 
       /* Base background for app */
+      html, body {{
+        background: var(--ui-bg-color);
+      }}
       .stApp {{
         background: var(--ui-bg-color);
+      }}
+      /* Ensure top header strip matches theme */
+      header[data-testid="stHeader"] {{
+        background: var(--ui-bg-color) !important;
+        border-bottom: 1px solid var(--ui-border-color);
+      }}
+      /* Toolbar and header contents */
+      [data-testid="stToolbar"],
+      header[data-testid="stHeader"] * {{
+        background: transparent !important;
+        color: var(--ui-text-color) !important;
+      }}
+      /* App view and main container backgrounds */
+      [data-testid="stAppViewContainer"],
+      [data-testid="stMain"] {{
+        background: var(--ui-bg-color) !important;
       }}
 
       /* Headings styling */
@@ -177,11 +197,45 @@ def apply_theme():
         color: var(--ui-text-color);
       }}
 
-      /* File uploader styling */
-      /* Target the nested dropzone container instead of the outer wrapper */
+      /* =========================
+         File uploader dark-mode
+         ========================= */
+      /* Wrapper: ensure no leftover white area under dropzone */
+      [data-testid="stFileUploader"] {{
+        background: var(--ui-bg-color) !important;
+      }}
+      /* Dropzone area */
+      [data-testid="stFileUploader"] [data-testid="stFileUploaderDropzone"],
       [data-testid="stFileUploader"] > div > div {{
         background: var(--ui-card-color) !important;
         border: 1px dashed var(--ui-border-color) !important;
+        color: var(--ui-text-color) !important;
+      }}
+      /* Descriptive text and labels inside uploader */
+      [data-testid="stFileUploader"] p,
+      [data-testid="stFileUploader"] small,
+      [data-testid="stFileUploader"] span,
+      [data-testid="stFileUploader"] label {{
+        color: var(--ui-text-color) !important;
+      }}
+      /* Browse files button styling */
+      [data-testid="stFileUploader"] button {{
+        background: var(--ui-card-color) !important;
+        color: var(--ui-header-color) !important;
+        border: 1px solid var(--ui-border-color) !important;
+        border-radius: 8px !important;
+      }}
+      [data-testid="stFileUploader"] button:hover {{
+        filter: brightness(1.08);
+      }}
+      /* Hover state for dropzone (dragging over) */
+      [data-testid="stFileUploader"] [data-testid="stFileUploaderDropzone"]:hover {{
+        background: rgba(255,255,255,0.03) !important;
+      }}
+      /* File list preview area */
+      [data-testid="stFileUploader"] [role="list"],
+      [data-testid="stFileUploader"] [role="list"] * {{
+        background: transparent !important;
         color: var(--ui-text-color) !important;
       }}
 
@@ -212,20 +266,10 @@ def apply_theme():
         color: var(--ui-text-color);
       }}
 
-      /* Ensure the top container (block container) uses the app background in dark mode */
-      /* This helps remove the residual white bar above the first content block */
+      /* Ensure the top container uses app background in dark mode */
       .block-container {{
         background: var(--ui-bg-color);
       }}
-
-      /* Improve file uploader styling: dark background with white text on dark theme */
-      /* Ensure all descriptive text inside file uploader is visible */
-      [data-testid="stFileUploader"] p,
-      [data-testid="stFileUploader"] small,
-      [data-testid="stFileUploader"] span {{
-        color: var(--ui-text-color) !important;
-      }}
-
     </style>
     """, unsafe_allow_html=True)
 
