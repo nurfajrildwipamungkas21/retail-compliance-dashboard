@@ -97,17 +97,20 @@ def get_theme_palette(base: str) -> dict:
 
 
 def apply_theme():
-    """Set template Plotly + inject global CSS per user theme choice."""
+    """
+    Set template Plotly and inject global CSS per user theme choice.
+    This extended version styles the sidebar, file uploader, buttons,
+    alerts, and dataframes to ensure consistency in dark mode.
+    """
     base = _get_theme_base()
     pal = get_theme_palette(base)
-    # Set default template for all Plotly charts
+    # set template plotly, simpan palette di session_state
     pio.templates.default = pal["plotly_template"]
-    # store palette in session
     st.session_state["ui_palette"] = pal
     st.session_state["ui_text_color"] = pal["text"]
+    # preserve resolved theme base for downstream use
     st.session_state["ui_theme_base_resolved"] = base
-    # Inject CSS: avoid overriding global text color; rely on default colors for built‑in
-    # components. Only override backgrounds, headings, metrics and caption.
+
     st.markdown(f"""
     <style>
       /* Define CSS custom properties for dynamic theming */
@@ -118,19 +121,96 @@ def apply_theme():
         --ui-card-color: {pal['card']};
         --ui-border-color: {pal['border']};
       }}
-      .stApp {{ background: var(--ui-bg-color); }}
-      h1, h2, h3, h4, h5, h6 {{ color: var(--ui-header-color); }}
-      div[data-testid="stMetric"] label {{ color: var(--ui-text-color) !important; }}
-      div[data-testid="stMetricValue"] {{ color: var(--ui-header-color) !important; }}
+
+      /* Base background for app */
+      .stApp {{
+        background: var(--ui-bg-color);
+      }}
+
+      /* Headings styling */
+      h1, h2, h3, h4, h5, h6 {{
+        color: var(--ui-header-color);
+      }}
+
+      /* Metrics styling */
+      div[data-testid="stMetric"] label {{
+        color: var(--ui-text-color) !important;
+      }}
+      div[data-testid="stMetricValue"] {{
+        color: var(--ui-header-color) !important;
+      }}
+
       /* Caption components: ensure they remain visible on dark backgrounds */
-      .stCaption, .stCaption p {{ color: var(--ui-text-color); opacity: 0.75; }}
-      /* Markdown content: paragraphs and list items adopt the primary text color */
+      .stCaption, .stCaption p {{
+        color: var(--ui-text-color);
+        opacity: 0.75;
+      }}
+
+      /* Markdown paragraphs and list items */
       div[data-testid="stMarkdownContainer"] p,
-      div[data-testid="stMarkdownContainer"] li {{ color: var(--ui-text-color); }}
-      /* Emphasised text within markdown uses the header color for contrast */
-      div[data-testid="stMarkdownContainer"] strong {{ color: var(--ui-header-color); }}
+      div[data-testid="stMarkdownContainer"] li {{
+        color: var(--ui-text-color);
+      }}
+
+      /* Emphasised text within markdown */
+      div[data-testid="stMarkdownContainer"] strong {{
+        color: var(--ui-header-color);
+      }}
+
       /* Generic card styling */
-      .card-like {{ background: var(--ui-card-color); border:1px solid var(--ui-border-color); border-radius:12px; padding:16px; }}
+      .card-like {{
+        background: var(--ui-card-color);
+        border: 1px solid var(--ui-border-color);
+        border-radius: 12px;
+        padding: 16px;
+      }}
+
+      /* Sidebar: background and text color */
+      [data-testid="stSidebar"] > div:first-child {{
+        background: var(--ui-bg-color);
+        border-right: 1px solid var(--ui-border-color);
+        color: var(--ui-text-color);
+      }}
+      [data-testid="stSidebar"] label,
+      [data-testid="stSidebar"] span,
+      [data-testid="stSidebar"] p {{
+        color: var(--ui-text-color);
+      }}
+
+      /* File uploader styling */
+      [data-testid="stFileUploader"] > div {{
+        background: var(--ui-card-color) !important;
+        border: 1px dashed var(--ui-border-color) !important;
+        color: var(--ui-text-color) !important;
+      }}
+
+      /* Buttons: standard and download */
+      button {{
+        background: var(--ui-card-color) !important;
+        color: var(--ui-header-color) !important;
+        border: 1px solid var(--ui-border-color) !important;
+        border-radius: 8px !important;
+        padding: 0.4rem 0.75rem !important;
+      }}
+      button:hover {{
+        filter: brightness(1.1);
+      }}
+
+      /* Badge 'Pipeline selesai' */
+      [data-testid="stAlert"] {{
+        background: #193d3d !important;
+        border: 1px solid #0f2f2f !important;
+        color: #c6f6f3 !important;
+      }}
+
+      /* DataFrame and table styling */
+      .stDataFrameContainer, .stTable {{
+        background: var(--ui-card-color);
+        border-radius: 8px;
+        border: 1px solid var(--ui-border-color);
+        color: var(--ui-text-color);
+      }}
+
     </style>
     """, unsafe_allow_html=True)
 
