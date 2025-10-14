@@ -376,7 +376,7 @@ def build_offline_html_report(df_class: pd.DataFrame, df_report: pd.DataFrame, s
   </div>
   <div class="card" style="margin-top:16px">
     <h2>Analisis Naratif Otomatis</h2>
-    {narrative_html if narrative_html else '<p class="muted'>Narasi tidak tersedia.</p>'}
+    {narrative_html if narrative_html else, '<p class="muted'>Narasi tidak tersedia.</p>'}
   </div>
   <div class="card" style="margin-top:16px">
     <h2>Ringkasan Status</h2>
