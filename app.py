@@ -1,4 +1,3 @@
-
 import os
 import io
 import base64
@@ -56,6 +55,70 @@ st.set_page_config(
     layout="wide"
 )
 logging.getLogger().setLevel(logging.INFO)
+
+# =========================
+# THEME: Helper & CSS injector
+# =========================
+# Pilihan: "light" | "dark" | "auto"
+THEME_KEY = "ui_theme_base"
+
+def _get_theme_base() -> str:
+    sel = st.session_state.get(THEME_KEY, "auto")
+    if sel in ("light", "dark"):
+        return sel
+    # "auto" -> ikut setting Streamlit (user/browser)
+    try:
+        base = st.get_option("theme.base")
+        return (base or "light").lower()
+    except Exception:
+        return "light"
+
+
+def get_theme_palette(base: str) -> dict:
+    if base == "dark":
+        return dict(
+            base="dark",
+            bg="#0e1117",
+            text="#e5e7eb",
+            card="#111827",
+            border="#1f2937",
+            header="#f3f4f6",
+            plotly_template="plotly_dark",
+        )
+    return dict(
+        base="light",
+        bg="#ffffff",
+        text="#111827",
+        card="#ffffff",
+        border="#e5e7eb",
+        header="#0f172a",
+        plotly_template="plotly_white",
+    )
+
+
+def apply_theme():
+    """Set template Plotly + inject global CSS per user theme choice."""
+    base = _get_theme_base()
+    pal = get_theme_palette(base)
+    # Set default template for all Plotly charts
+    pio.templates.default = pal["plotly_template"]
+    # store palette in session
+    st.session_state["ui_palette"] = pal
+    st.session_state["ui_text_color"] = pal["text"]
+    st.session_state["ui_theme_base_resolved"] = base
+    # Inject CSS
+    st.markdown(f"""
+    <style>
+      .stApp {{ background: {pal['bg']}; color: {pal['text']}; }}
+      h1, h2, h3, h4, h5, h6 {{ color: {pal['header']}; }}
+      .stMarkdown, .stText, .stCaption, .st-emotion-cache-16idsys p {{ color: {pal['text']}; }}
+      div[data-testid="stMetric"] label {{ color: {pal['text']} !important; }}
+      div[data-testid="stMetricValue"] {{ color: {pal['header']} !important; }}
+      /* Generic card styling */
+      .card-like {{ background:{pal['card']}; border:1px solid {pal['border']}; border-radius:12px; padding:16px; }}
+    </style>
+    """, unsafe_allow_html=True)
+
 
 # =========================
 # PERSISTENCE
@@ -449,7 +512,7 @@ def generate_ai_narrative(
     Generate a short narrative using Gemini if enabled. All numerical statistics
     are precomputed in Python to minimize hallucination and ensure correct
     formatting. The output is cleaned of Markdown and styled for better
-    visibility in Streamlit dark mode.
+    visibility in Streamlit.
     """
     if not ENABLE_AI:
         return ""
@@ -504,29 +567,16 @@ def generate_ai_narrative(
             resp2.text if hasattr(resp2, "text") else str(resp2)
         )
 
-        # Determine the active theme's text color.  Streamlit exposes theme values
-        # via st.get_option().  When running in dark mode, ``theme.textColor`` will
-        # typically be a light color (e.g. '#e5e7eb'); in light mode it will be dark
-        # (e.g. '#111827').  Fall back to a sensible default if unavailable.
-        color = None
-        try:
-            color = st.get_option("theme.textColor")
-        except Exception:
-            color = None
+        # Determine text color from theme palette stored in session
+        color = st.session_state.get("ui_text_color")
         if not color:
-            # fallback: use dark gray for light theme and light gray for dark theme based on theme.base
             try:
-                base = st.get_option("theme.base")
+                base = st.get_option("theme.base") or "light"
             except Exception:
-                base = None
-            if base and base.lower() == "dark":
-                color = "#e5e7eb"
-            else:
-                color = "#111827"
+                base = "light"
+            color = "#e5e7eb" if str(base).lower() == "dark" else "#111827"
 
-        # Use a single color for both text and headings to ensure contrast.  Do not
-        # rely on CSS variables, as the HTML is rendered in an iframe and cannot
-        # inherit variables from the parent document.
+        # Use consistent color for headings and text
         html = f"""
         <div style='font-family:Inter,Segoe UI; color:{color}; line-height:1.6'>
           <h3 style='margin-top:0; color:{color}'>Analisis Naratif Otomatis</h3>
@@ -573,17 +623,19 @@ def build_offline_html_report(
     treemap_fig = plot_treemap(df_class)
     pie_fig = plot_pie(df_class)
 
-    # Apply dark template for consistency with Streamlit dark theme
+    # Determine palette based on current theme
+    pal = st.session_state.get("ui_palette", get_theme_palette("dark"))
+    # Apply template per theme for offline charts
     for fig in [funnel_fig, treemap_fig, pie_fig]:
         try:
-            fig.update_layout(template="plotly_dark")
+            fig.update_layout(template=pal["plotly_template"])
         except Exception:
             pass
 
     # Convert figures to HTML strings
-    funnel_html  = funnel_fig.to_html(include_plotlyjs="full", full_html=False)
+    funnel_html = funnel_fig.to_html(include_plotlyjs="full", full_html=False)
     treemap_html = treemap_fig.to_html(include_plotlyjs=False, full_html=False)
-    pie_html     = pie_fig.to_html(include_plotlyjs=False, full_html=False)
+    pie_html = pie_fig.to_html(include_plotlyjs=False, full_html=False)
 
     # Prepare summary table HTML
     summary_display = summary_df.reset_index().rename(columns={"index": "Status"})
@@ -595,7 +647,7 @@ def build_offline_html_report(
     total_anom = len(df_report)
     now_str = datetime.now().strftime("%d %B %Y, %H:%M WIB")
 
-    # Compose the full HTML
+    # Compose the full HTML with palette
     html_body = f"""
 <!doctype html>
 <html lang="id">
@@ -604,17 +656,17 @@ def build_offline_html_report(
 <title>Compliance Dashboard — Offline Report</title>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <style>
-  body{{background:#0e1117;color:#e5e7eb;font-family:Inter,Segoe UI,Arial,sans-serif;padding:24px;}}
-  h1,h2,h3{{color:#f3f4f6;margin:0.2rem 0;}}
-  .muted{{color:#a1a1aa;}}
+  body{{background:{pal['bg']};color:{pal['text']};font-family:Inter,Segoe UI,Arial,sans-serif;padding:24px;}}
+  h1,h2,h3{{color:{pal['header']};margin:0.2rem 0;}}
+  .muted{{opacity:.75;}}
   .kpis{{display:flex;gap:40px;margin:16px 0 24px;}}
-  .kpi h3{{margin:0 0 4px 0;font-weight:600;}}
-  .kpi div{{font-size:28px;font-weight:700;}}
+  .kpi h3{{margin:0 0 4px 0;font-weight:600;color:{pal['text']};}}
+  .kpi div{{font-size:28px;font-weight:700;color:{pal['header']};}}
   .grid{{display:grid;grid-template-columns:1fr 1fr;gap:16px;}}
   table{{border-collapse:collapse;width:100%;margin-top:12px;}}
-  th,td{{border-bottom:1px solid #2d333b;padding:8px;text-align:left;}}
-  th{{color:#e5e7eb;font-weight:600;}}
-  .card{{background:#111827;border:1px solid #1f2937;border-radius:12px;padding:16px;}}
+  th,td{{border-bottom:1px solid {pal['border']};padding:8px;text-align:left;color:{pal['text']};}}
+  th{{font-weight:600;}}
+  .card{{background:{pal['card']};border:1px solid {pal['border']};border-radius:12px;padding:16px;}}
 </style>
 </head>
 <body>
@@ -915,6 +967,11 @@ st.caption(
 )
 
 with st.sidebar:
+    # Theme selector
+    st.header("🎨 Theme")
+    _choice = st.radio("Tampilan", ["Auto", "Light", "Dark"], index=0, horizontal=True)
+    st.session_state[THEME_KEY] = _choice.lower() if _choice != "Auto" else "auto"
+
     st.header("⚙️ Input Data")
     up = st.file_uploader(
         "Upload CSV / XLSX (opsional)", type=["csv", "xlsx", "xls"]
@@ -929,6 +986,9 @@ with st.sidebar:
         "Jika Anda tidak mengunggah file, aplikasi secara otomatis akan memproses dataset contoh."
     )
     run_btn = st.button("🚀 Jalankan Pipeline")
+
+# Apply the theme settings after sidebar inputs are defined
+apply_theme()
 
 
 def load_or_generate_initial_results() -> tuple[pd.DataFrame, pd.DataFrame]:
