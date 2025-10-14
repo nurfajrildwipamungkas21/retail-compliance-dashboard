@@ -505,12 +505,7 @@ def generate_ai_narrative(
             Soroti hanya inti bisnis & risiko utama secara singkat.
             """
         )
-        # Limit the call duration to avoid hanging the app on platforms
-        # (e.g. Streamlit Community Cloud) where external API requests may
-        # stall or time out.  The timeout is specified in milliseconds via
-        # request_options.  If the request exceeds this duration, a
-        # ``genai`` exception will be raised and caught below.
-        resp1 = model.generate_content(prompt1, request_options={"timeout": 20000})
+        resp1 = model.generate_content(prompt1)
         exec_html = _clean_ai_html(
             resp1.text if hasattr(resp1, "text") else str(resp1)
         )
@@ -525,22 +520,40 @@ def generate_ai_narrative(
             Cantumkan 2-3 rekomendasi ringkas & praktis (audit proses, validasi input, pemantauan).
             """
         )
-        resp2 = model.generate_content(prompt2, request_options={"timeout": 20000})
+        resp2 = model.generate_content(prompt2)
         find_html = _clean_ai_html(
             resp2.text if hasattr(resp2, "text") else str(resp2)
         )
 
-        # Build a simple HTML snippet.  Do not hard‑code any colours here so that
-        # the text inherits the surrounding Streamlit theme.  This ensures the
-        # narrative is legible in both light and dark modes without additional
-        # styling.  Headings use basic HTML tags which Streamlit will style
-        # appropriately when rendered via st.markdown.
+        # Determine the active theme's text color.  Streamlit exposes theme values
+        # via st.get_option().  When running in dark mode, ``theme.textColor`` will
+        # typically be a light color (e.g. '#e5e7eb'); in light mode it will be dark
+        # (e.g. '#111827').  Fall back to a sensible default if unavailable.
+        color = None
+        try:
+            color = st.get_option("theme.textColor")
+        except Exception:
+            color = None
+        if not color:
+            # fallback: use dark gray for light theme and light gray for dark theme based on theme.base
+            try:
+                base = st.get_option("theme.base")
+            except Exception:
+                base = None
+            if base and base.lower() == "dark":
+                color = "#e5e7eb"
+            else:
+                color = "#111827"
+
+        # Use a single color for both text and headings to ensure contrast.  Do not
+        # rely on CSS variables, as the HTML is rendered in an iframe and cannot
+        # inherit variables from the parent document.
         html = f"""
-        <div style='font-family:Inter,Segoe UI; line-height:1.6'>
-          <h3 style='margin-top:0'>Analisis Naratif Otomatis</h3>
-          <h4>Ringkasan Eksekutif</h4>
+        <div style='font-family:Inter,Segoe UI; color:{color}; line-height:1.6'>
+          <h3 style='margin-top:0; color:{color}'>Analisis Naratif Otomatis</h3>
+          <h4 style='color:{color}'>Ringkasan Eksekutif</h4>
           {exec_html}
-          <h4>Temuan &amp; Rekomendasi</h4>
+          <h4 style='color:{color}'>Temuan & Rekomendasi</h4>
           {find_html}
         </div>
         """
@@ -794,13 +807,9 @@ def show_pipeline_results(df_class: pd.DataFrame, df_report: pd.DataFrame, save_
             zero_n,
         )
         if html_ai:
-            # Display AI‑generated narrative.  Render the HTML within the
-            # Streamlit page so that it inherits the active theme.  Setting
-            # ``unsafe_allow_html=True`` allows our HTML headings and
-            # paragraphs to render correctly.  We avoid specifying a fixed
-            # height so that the content can expand naturally on both mobile
-            # and desktop devices.
-            st.markdown(html_ai, unsafe_allow_html=True)
+            # Display AI-generated narrative and store for offline report
+            # Reduce the height to fit better on mobile screens
+            st.components.v1.html(html_ai, height=520, scrolling=True)
             narrative_html = html_ai
         else:
             st.info(
