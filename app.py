@@ -94,7 +94,7 @@ LAST_REPORT_PATH = "demo_last_report.parquet"
 # Fallback: use environment variable GEMINI_API_KEY if provided; otherwise
 # fallback to this demo key. For production usage, consider storing the
 # key securely in secrets and not hard-coding it here.
-DEMO_GEMINI_KEY = "AIzaSyCIorCwif0YeTrjntDDTMHxqcsbZuhQxZ8"
+DEMO_GEMINI_KEY = "AIzaSyDd19AHP6cciyErg-bky3u07fXVGnXaraE"
 
 
 def get_gemini_key() -> str:
@@ -525,22 +525,16 @@ def generate_ai_narrative(
             resp2.text if hasattr(resp2, "text") else str(resp2)
         )
 
-        # Determine text color based on the active Streamlit theme. When using the light theme,
-        # dark text colors are used to ensure readability. Otherwise the dark theme colors are used.
-        try:
-            base_theme = st.get_option("theme.base")
-        except Exception:
-            base_theme = "light"
-        text_color = "#e5e7eb" if base_theme == "dark" else "#111827"
-        heading_color = "#f3f4f6" if base_theme == "dark" else "#111827"
-
-        # Wrap output with styling adapted to the theme. Remove any leftover markdown bold markers.
+        # Use Streamlit's CSS variables for adaptive colors.  The ``var(--text-color)``
+        # custom property automatically matches the active theme (light or dark).  This
+        # ensures text remains visible across devices and themes without manually
+        # detecting ``theme.base``.  Headings reuse the same color for simplicity.
         html = f"""
-        <div style='font-family:Inter,Segoe UI; color:{text_color}; line-height:1.6'>
-          <h3 style='margin-top:0; color:{heading_color}'>Analisis Naratif Otomatis</h3>
-          <h4 style='color:{heading_color}'>Ringkasan Eksekutif</h4>
+        <div style='font-family:Inter,Segoe UI; color:var(--text-color); line-height:1.6'>
+          <h3 style='margin-top:0; color:var(--text-color)'>Analisis Naratif Otomatis</h3>
+          <h4 style='color:var(--text-color)'>Ringkasan Eksekutif</h4>
           {exec_html}
-          <h4 style='color:{heading_color}'>Temuan & Rekomendasi</h4>
+          <h4 style='color:var(--text-color)'>Temuan & Rekomendasi</h4>
           {find_html}
         </div>
         """
