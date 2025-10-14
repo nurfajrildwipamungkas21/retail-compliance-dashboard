@@ -525,16 +525,35 @@ def generate_ai_narrative(
             resp2.text if hasattr(resp2, "text") else str(resp2)
         )
 
-        # Use Streamlit's CSS variables for adaptive colors.  The ``var(--text-color)``
-        # custom property automatically matches the active theme (light or dark).  This
-        # ensures text remains visible across devices and themes without manually
-        # detecting ``theme.base``.  Headings reuse the same color for simplicity.
+        # Determine the active theme's text color.  Streamlit exposes theme values
+        # via st.get_option().  When running in dark mode, ``theme.textColor`` will
+        # typically be a light color (e.g. '#e5e7eb'); in light mode it will be dark
+        # (e.g. '#111827').  Fall back to a sensible default if unavailable.
+        color = None
+        try:
+            color = st.get_option("theme.textColor")
+        except Exception:
+            color = None
+        if not color:
+            # fallback: use dark gray for light theme and light gray for dark theme based on theme.base
+            try:
+                base = st.get_option("theme.base")
+            except Exception:
+                base = None
+            if base and base.lower() == "dark":
+                color = "#e5e7eb"
+            else:
+                color = "#111827"
+
+        # Use a single color for both text and headings to ensure contrast.  Do not
+        # rely on CSS variables, as the HTML is rendered in an iframe and cannot
+        # inherit variables from the parent document.
         html = f"""
-        <div style='font-family:Inter,Segoe UI; color:var(--text-color); line-height:1.6'>
-          <h3 style='margin-top:0; color:var(--text-color)'>Analisis Naratif Otomatis</h3>
-          <h4 style='color:var(--text-color)'>Ringkasan Eksekutif</h4>
+        <div style='font-family:Inter,Segoe UI; color:{color}; line-height:1.6'>
+          <h3 style='margin-top:0; color:{color}'>Analisis Naratif Otomatis</h3>
+          <h4 style='color:{color}'>Ringkasan Eksekutif</h4>
           {exec_html}
-          <h4 style='color:var(--text-color)'>Temuan & Rekomendasi</h4>
+          <h4 style='color:{color}'>Temuan & Rekomendasi</h4>
           {find_html}
         </div>
         """
