@@ -94,7 +94,7 @@ LAST_REPORT_PATH = "demo_last_report.parquet"
 # Fallback: use environment variable GEMINI_API_KEY if provided; otherwise
 # fallback to this demo key. For production usage, consider storing the
 # key securely in secrets and not hard-coding it here.
-DEMO_GEMINI_KEY = "AIzaSyCXQQlDnENBgfFXsmDj86we_UxigK0TlgM"
+DEMO_GEMINI_KEY = "AIzaSyCIorCwif0YeTrjntDDTMHxqcsbZuhQxZ8"
 
 
 def get_gemini_key() -> str:
