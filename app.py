@@ -106,14 +106,16 @@ def apply_theme():
     st.session_state["ui_palette"] = pal
     st.session_state["ui_text_color"] = pal["text"]
     st.session_state["ui_theme_base_resolved"] = base
-    # Inject CSS
+    # Inject CSS: avoid overriding global text color; rely on default colors for built‑in
+    # components. Only override backgrounds, headings, metrics and caption.
     st.markdown(f"""
     <style>
-      .stApp {{ background: {pal['bg']}; color: {pal['text']}; }}
+      .stApp {{ background: {pal['bg']}; }}
       h1, h2, h3, h4, h5, h6 {{ color: {pal['header']}; }}
-      .stMarkdown, .stText, .stCaption, .st-emotion-cache-16idsys p {{ color: {pal['text']}; }}
       div[data-testid="stMetric"] label {{ color: {pal['text']} !important; }}
       div[data-testid="stMetricValue"] {{ color: {pal['header']} !important; }}
+      /* Caption text should remain visible on dark backgrounds */
+      div[data-testid="stCaption"] {{ color: {pal['text']}; opacity: 0.75; }}
       /* Generic card styling */
       .card-like {{ background:{pal['card']}; border:1px solid {pal['border']}; border-radius:12px; padding:16px; }}
     </style>
